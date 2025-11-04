@@ -1,59 +1,159 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { Slot } from 'expo-router';
+import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { ThemeProvider } from '../contexts/ThemeContext';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import Constants from 'expo-constants';
 
-import { useColorScheme } from '@/components/useColorScheme';
-
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
-
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
+// Get Convex URL from environment with fallback
+const getConvexUrl = () => {
+  // Try multiple ways to get the URL
+  const url = 
+    process.env.EXPO_PUBLIC_CONVEX_URL || 
+    Constants.expoConfig?.extra?.convexUrl ||
+    Constants.manifest?.extra?.convexUrl;
+  
+  return url;
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+const convexUrl = getConvexUrl();
+
+// Log for debugging (will appear in expo logs)
+console.log('Convex URL:', convexUrl ? 'Found' : 'Missing');
+
+let convex: ConvexReactClient | null = null;
+
+if (convexUrl) {
+  try {
+    convex = new ConvexReactClient(convexUrl, {
+      unsavedChangesWarning: false,
+    });
+    console.log('Convex client initialized successfully');
+  } catch (error) {
+    console.error('Convex initialization error:', error);
+  }
+} else {
+  console.error('EXPO_PUBLIC_CONVEX_URL is not defined');
+}
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
+  const [fontsLoaded, fontError] = useFonts({
+    'JosefinSans-Regular': require('../assets/fonts/JosefinSans-Regular.ttf'),
+    'JosefinSans-Bold': require('../assets/fonts/JosefinSans-Bold.ttf'),
   });
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
+  const [showError, setShowError] = useState(false);
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
+    if (fontError) {
+      console.error('Font loading error:', fontError);
     }
-  }, [loaded]);
+    
+    // Show error after 2 seconds if no Convex URL
+    if (!convexUrl) {
+      const timer = setTimeout(() => setShowError(true), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [fontError]);
 
-  if (!loaded) {
-    return null;
+  // Show loading while fonts load
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6C63FF" />
+        <Text style={styles.loadingText}>Loading TodoApp...</Text>
+      </View>
+    );
   }
 
-  return <RootLayoutNav />;
-}
+  // Show error if Convex is not initialized
+  if (!convex && showError) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorIcon}>⚠️</Text>
+        <Text style={styles.errorTitle}>Configuration Error</Text>
+        <Text style={styles.errorText}>
+          Unable to connect to backend server.
+        </Text>
+        <Text style={styles.errorHint}>
+          Please contact the developer.
+        </Text>
+        <Text style={styles.errorDebug}>
+          Missing EXPO_PUBLIC_CONVEX_URL
+        </Text>
+      </View>
+    );
+  }
 
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  // If no Convex but within timeout, show loading
+  if (!convex) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6C63FF" />
+        <Text style={styles.loadingText}>Connecting to server...</Text>
+      </View>
+    );
+  }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ConvexProvider client={convex}>
+        <ThemeProvider>
+          <Slot />
+        </ThemeProvider>
+      </ConvexProvider>
+    </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1A1A2E',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#EAEAEA',
+    fontWeight: '600',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1A1A2E',
+    padding: 32,
+  },
+  errorIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  errorTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#EF4444',
+    marginBottom: 12,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#EAEAEA',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  errorHint: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  errorDebug: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+});
